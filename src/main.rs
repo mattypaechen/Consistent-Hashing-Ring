@@ -271,17 +271,18 @@ mod data_storm {
     #[test]
     fn run_data_storm() {
         let mut hash_ring = ConsistentHash::new();
+        let total_key_count = 1000u32;
 
         // 1. Initial State: 3 Nodes
         let initial_nodes = vec!["Node_A", "Node_B", "Node_C"];
-        let mut weight = 100u32;
+        let init_nodes_weight = 100u32;
         for node in &initial_nodes {
-            hash_ring.add_node(node.to_string(), weight);
+            hash_ring.add_node(node.to_string(), init_nodes_weight);
         }
 
         // 2. Assign 1,000 keys and record their locations
         let mut key_inventory = HashMap::new();
-        for i in 0..1000 {
+        for i in 0..total_key_count {
             let key = format!("key_id_{}", i);
             let assigned_node = hash_ring.get_node(&key);
             key_inventory.insert(key, assigned_node);
@@ -289,8 +290,8 @@ mod data_storm {
 
         // 3. Add a 4th node (The Storm)
         println!("\n--- Adding Node_D ---");
-        weight = 200u32;
-        hash_ring.add_node("Node_D".to_string(), weight);
+        let new_node_weight = 200u32;
+        hash_ring.add_node("Node_D".to_string(), new_node_weight);
 
         // 4. Check how many keys moved
         let mut moved_count = 0;
@@ -317,23 +318,37 @@ mod data_storm {
         );
 
         // 1. Collect counts per node
-        let mut key_counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut key_counts: HashMap<String, usize> = HashMap::new();
         for node in hash_ring.ring.values() {
             key_counts.insert(node.clone(), 0);
         }
 
-        for key in 0..1000 {
+        for key in 0..total_key_count {
             let node = hash_ring.get_node(&format!("key_{}", key));
             *key_counts.entry(node).or_insert(0) += 1;
         }
 
         // 2. Calculate Mean (Average)
-        let n = key_counts.len() as f32;
-        let sum: usize = key_counts.values().sum();
+        let n = key_counts.len() as f32; // represents count of physical nodes
+        let sum: usize = key_counts.values().sum(); // number of keys
         let mean = sum as f32 / n;
 
-        // 3. Calculate Variance
+        // 2b. Calculate Residual Error (Actual - Expected Value)
+        let mut residual_errors = HashMap::new();
+        let total_weight = init_nodes_weight * 3 + new_node_weight;
+
+        for (pnode, actual_key_count) in &key_counts {
+            let expected_weight = if pnode == "Node_D" {
+                new_node_weight
+            } else {
+                init_nodes_weight
+            };
+            let pnode_error = *actual_key_count as f32
+                - ((total_key_count * expected_weight) as f32 / total_weight as f32);
+            residual_errors.insert(pnode, pnode_error);
+        }
+
+        // 3. Calculate Variance and Weighted Variance
         let variance: f32 = key_counts
             .values()
             .map(|&count| {
@@ -343,8 +358,11 @@ mod data_storm {
             .sum::<f32>()
             / n;
 
-        // 4. Standard Deviation
+        let weighted_var: f32 = residual_errors.values().map(|&re| re * re).sum::<f32>() / n;
+
+        // 4. Standard Deviation and Weighted Standard Deviation
         let std_dev = variance.sqrt();
+        let weighted_std_dev = weighted_var.sqrt();
 
         println!("\n--- Weight Distribution ---");
 
@@ -359,6 +377,11 @@ mod data_storm {
         }
 
         println!("Standard Deviation: {:.2}", std_dev);
-        println!("Coefficient of Variation: {:.2}%", (std_dev / mean) * 100.0)
+        println!("Coefficient of Variation: {:.2}%", (std_dev / mean) * 100.0); // How hard a node is working compared to its peers. > 50 is red flag
+        println!("Weighted Standard Deviation: {:.2}", weighted_std_dev);
+        println!(
+            "Weighted Coefficient of Variation: {:.2}%",
+            (weighted_std_dev / mean) * 100.0
+        ) // How hard a node is working compared to its peers. > 50 is red flag
     }
 }
