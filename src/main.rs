@@ -134,6 +134,32 @@ impl ConsistentHash {
             self.metamap.remove(&node);
         }
     }
+
+    pub fn get_replication_list(&self, key: &str, mut count: usize) -> Vec<String> {
+        if count > self.metamap.len() {
+            count = self.metamap.len();
+        }
+
+        let mut rep_list = vec![];
+        let hash = hashify(key);
+        let primary_node = self.get_node(key);
+
+        let tail = self.ring.range(hash..);
+        let head = self.ring.range(..hash);
+        let circular_iterator = tail.chain(head);
+
+        for (_vnode_hash, pnode) in circular_iterator {
+            if *pnode != primary_node && !rep_list.contains(pnode) {
+                rep_list.push(pnode.clone());
+
+                if rep_list.len() == count {
+                    break;
+                }
+            }
+        }
+
+        rep_list
+    }
 }
 
 fn main() {
@@ -261,6 +287,31 @@ mod unit_tests {
 
         let node = hash_ring.get_node(&gt_value);
         assert_eq!(node, "Server1");
+    }
+
+    #[test]
+    fn test_get_replication_list() {
+        let mut hash_ring = ConsistentHash::new();
+        hash_ring.add_node("Node_A", 1);
+        hash_ring.add_node("Node_B", 1);
+        hash_ring.add_node("Node_C", 1);
+        let key = "unique key";
+        let replicas = hash_ring.get_replication_list(key, 2);
+        for r in &replicas {
+            println!("node {} in list", r);
+        }
+        // REQUIREMENT 1: Correct count
+        assert_eq!(
+            replicas.len(),
+            2,
+            "Should return exactly N replicas if available"
+        );
+
+        // REQUIREMENT 2: Uniqueness
+        assert_ne!(
+            replicas[0], replicas[1],
+            "Replicas must be distinct physical nodes"
+        );
     }
 }
 
